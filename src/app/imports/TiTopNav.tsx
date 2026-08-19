@@ -5,7 +5,14 @@ import Panel from './Panel';
 interface TiTopNavProps {
   onToggleContactInfo?: () => void;
   isContactInfoVisible?: boolean;
+  // Presence is a chat concept — nobody is "Available" for email. Passed down by
+  // context so the generated wrapper components in between stay untouched.
+  showPresence?: boolean;
+  // So is the session countdown: an email thread has no window that expires.
+  showTimer?: boolean;
 }
+
+const PresenceContext = React.createContext(true);
 
 function Wrapper3({ children }: React.PropsWithChildren<{}>) {
   return (
@@ -100,13 +107,16 @@ function Frame1984077390() {
 }
 
 function Frame1984077389() {
+  const showPresence = React.useContext(PresenceContext);
   return (
     <div className="relative shrink-0">
       <div className="box-border content-stretch flex flex-col items-start justify-start p-0 relative">
         <Frame1984077390 />
-        <div className="font-['Inter:Regular',_sans-serif] font-normal leading-[0] not-italic relative shrink-0 text-[#848a86] text-[12px] text-left text-nowrap">
-          <p className="block leading-[16px] whitespace-pre">Available</p>
-        </div>
+        {showPresence && (
+          <div className="font-['Inter:Regular',_sans-serif] font-normal leading-[0] not-italic relative shrink-0 text-[#848a86] text-[12px] text-left text-nowrap">
+            <p className="block leading-[16px] whitespace-pre">Available</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -390,25 +400,27 @@ function Frame1984077524({ onToggleContactInfo, isContactInfoVisible }: { onTogg
   );
 }
 
-function Frame1984077518({ onToggleContactInfo, isContactInfoVisible }: { onToggleContactInfo?: () => void; isContactInfoVisible?: boolean }) {
+function Frame1984077518({ onToggleContactInfo, isContactInfoVisible, showTimer }: { onToggleContactInfo?: () => void; isContactInfoVisible?: boolean; showTimer?: boolean }) {
   return (
     <Wrapper3>
-      <Timer />
+      {showTimer && <Timer />}
       <Frame1984077524 onToggleContactInfo={onToggleContactInfo} isContactInfoVisible={isContactInfoVisible} />
     </Wrapper3>
   );
 }
 
-export default function TiTopNav({ onToggleContactInfo, isContactInfoVisible }: TiTopNavProps = {}) {
+export default function TiTopNav({ onToggleContactInfo, isContactInfoVisible, showPresence = true, showTimer = true }: TiTopNavProps = {}) {
   return (
+   <PresenceContext.Provider value={showPresence}>
     <div className="bg-[#ffffff] relative size-full" data-name="TI - Top Nav">
       <div className="absolute border-[#e7e9e8] border-[0px_0px_1px] border-solid inset-0 pointer-events-none" />
       <div className="flex flex-row items-center relative size-full">
         <div className="box-border content-stretch flex flex-row items-center justify-between px-4 py-6 relative size-full">
           <Frame1984077521 />
-          <Frame1984077518 onToggleContactInfo={onToggleContactInfo} isContactInfoVisible={isContactInfoVisible} />
+          <Frame1984077518 onToggleContactInfo={onToggleContactInfo} isContactInfoVisible={isContactInfoVisible} showTimer={showTimer} />
         </div>
       </div>
     </div>
+   </PresenceContext.Provider>
   );
 }

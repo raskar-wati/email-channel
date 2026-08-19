@@ -40,6 +40,8 @@ interface ChatListProps {
     name: string;
     avatar: string;
     lastMessage: string;
+    subject?: string;
+    preview?: string;
     timestamp: string;
     date: Date;
     status: string;
@@ -71,6 +73,7 @@ interface ChatListProps {
   onCustomFilterApply: (filters: FilterSegment[], showOldChatsFirst: boolean, saveAsCustom?: boolean, customFilterName?: string) => void;
   selectedFilter: string;
   selectedChannel: string;
+  onComposeEmail?: () => void;
 }
 
 type PresetKey = 'today' | 'thisweek' | 'thismonth' | 'custom';
@@ -144,7 +147,8 @@ export function ChatList({
   onDateFilterClear,
   onCustomFilterApply,
   selectedFilter,
-  selectedChannel
+  selectedChannel,
+  onComposeEmail
 }: ChatListProps) {
   const [selectedTab, setSelectedTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -452,6 +456,19 @@ export function ChatList({
                 </Button>
               )}
               
+              {/* Compose a new email - only meaningful on the Email channel */}
+              {selectedChannel === 'Email' && onComposeEmail && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 transition-all duration-200"
+                  onClick={onComposeEmail}
+                  title="New email"
+                >
+                  <Plus className="w-4 h-4 text-gray-500" />
+                </Button>
+              )}
+
               {/* Date Filter Popover - Always available */}
               <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
                 <PopoverTrigger asChild>

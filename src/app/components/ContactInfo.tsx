@@ -665,11 +665,18 @@ function ContactDetailsInfoSection3({ username }: { username: string }) {
   );
 }
 
+// Source arrives as a raw enum (customer_initiated_chat_email). Agents shouldn't
+// have to read snake_case, so present it as a sentence.
+function humanizeSource(source: string): string {
+  const pretty = source.replace(/_/g, ' ').trim();
+  return pretty.charAt(0).toUpperCase() + pretty.slice(1);
+}
+
 function ContactDetailsInfoSectionText16({ source }: { source: string }) {
   return (
     <BackgroundImage251 additionalClassNames={["flex-1", "min-w-0"]}>
       <BackgroundImageAndText3
-        text={source}
+        text={humanizeSource(source)}
         additionalClassNames={["gap-1", "w-full"]}
       />
     </BackgroundImage251>

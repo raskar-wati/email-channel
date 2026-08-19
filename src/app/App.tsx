@@ -5,6 +5,8 @@ import { Sidebar } from './components/Sidebar';
 import { ChatList } from './components/ChatList';
 import { ContactInfo } from './components/ContactInfo';
 import { ChatInterface } from './components/ChatInterface';
+import { ComposeEmailDialog, ComposeSend } from './components/ComposeEmailDialog';
+import { normalizeSubject } from './lib/emailSubject';
 import { DateFilter, DateRange } from './components/DateFilter';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
 
@@ -14,6 +16,9 @@ interface Chat {
   name: string;
   avatar: string;
   lastMessage: string;
+  // Email rows show subject and snippet separately; chat rows use lastMessage
+  subject?: string;
+  preview?: string;
   timestamp: string;
   date: Date; // New field for proper date filtering
   status: 'Open' | 'Solved' | 'Broadcast';
@@ -582,6 +587,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e1',
     name: 'Nathan Cooper',
     avatar: 'NC',
+    subject: "Order #1043 refund request",
+    preview: "Thanks, I’ve attached the receipt as requested.",
     lastMessage: "Re: Order #1043 refund request — Thanks, I've attached the receipt as requested.",
     timestamp: '4:20 PM',
     date: createDate(0, 16, 20),
@@ -595,6 +602,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e2',
     name: 'Priya Nair',
     avatar: 'PN',
+    subject: "Invoice for March subscription",
+    preview: "Could you send a copy for our records?",
     lastMessage: 'Re: Invoice for March subscription — Could you send a copy for our records?',
     timestamp: '1:05 PM',
     date: createDate(1, 13, 5),
@@ -608,6 +617,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e3',
     name: 'Daniel Brooks',
     avatar: 'DB',
+    subject: "Bulk order enquiry",
+    preview: "Appreciate the quick turnaround, all sorted now.",
     lastMessage: 'Re: Bulk order enquiry — Appreciate the quick turnaround, all sorted now.',
     timestamp: '9:40 AM',
     date: createDate(4, 9, 40),
@@ -621,6 +632,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e4',
     name: 'Maria Gonzalez',
     avatar: 'MG',
+    subject: "Login issue on the mobile app",
+    preview: "Still unable to sign in after resetting my password.",
     lastMessage: 'Re: Login issue on the mobile app — Still unable to sign in after resetting my password.',
     timestamp: '10:12 AM',
     date: createDate(0, 10, 12),
@@ -634,6 +647,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e5',
     name: 'James Whitfield',
     avatar: 'JW',
+    subject: "Partnership proposal",
+    preview: "Great, I have looped in our partnerships lead. Speak soon!",
     lastMessage: 'Re: Partnership proposal — Great, I have looped in our partnerships lead. Speak soon!',
     timestamp: '5:47 PM',
     date: createDate(2, 17, 47),
@@ -647,6 +662,8 @@ const MOCK_CHATS: Chat[] = [
     id: 'e6',
     name: 'Aisha Rahman',
     avatar: 'AR',
+    subject: "Feature request — CSV export",
+    preview: "Thanks so much, delighted to hear it is on the roadmap!",
     lastMessage: 'Re: Feature request — CSV export — Thanks so much, delighted to hear it is on the roadmap!',
     timestamp: '3:28 PM',
     date: createDate(6, 15, 28),
@@ -2122,6 +2139,11 @@ export default function App() {
   const [customFilters, setCustomFilters] = useState<CustomFilter[]>([]);
   // Chat status/assignment overrides for bulk actions
   const [chatOverrides, setChatOverrides] = useState<Record<string, Partial<Chat>>>({});
+  // Conversations started from the composer (new recipient, no existing thread)
+  const [composedChats, setComposedChats] = useState<Chat[]>([]);
+  // The net-new-recipient composer is a modal; composing to a contact already on
+  // screen happens inline in the chat area instead.
+  const [isComposeOpen, setIsComposeOpen] = useState(false);
   // Custom hooks
   const screenSizes = useScreenSize();
   const {
@@ -2134,11 +2156,23 @@ export default function App() {
   // Enhanced filtering logic with comprehensive filter support
   // Merge static mock chats with any runtime overrides (from bulk actions)
   const allChats = useMemo(() => {
-    return MOCK_CHATS.map(chat => ({
-      ...chat,
-      ...(chatOverrides[chat.id] || {}),
-    }));
-  }, [chatOverrides]);
+    return [...composedChats, ...MOCK_CHATS].map(chat => {
+      const merged = { ...chat, ...(chatOverrides[chat.id] || {}) };
+      if (merged.channel !== 'Email') return merged;
+      // Derive the list's subject/snippet from the thread itself so a newly sent
+      // email updates the row instead of leaving the seeded text behind.
+      const thread = (messages[chat.id] || []).filter(m => m.type !== 'event');
+      const last = thread[thread.length - 1];
+      if (!last) return merged;
+      // Use the newest message's own subject so the row names the same thread the
+      // latest activity sits in — including "No subject" when it has none.
+      return {
+        ...merged,
+        subject: normalizeSubject(last.subject),
+        preview: last.text,
+      };
+    });
+  }, [chatOverrides, composedChats, messages]);
 
   const filteredChats = useMemo(() => {
     const filtered = allChats.filter(chat => {
@@ -2168,21 +2202,33 @@ export default function App() {
   }, [messages, selectedChat.id]);
 
   const currentContactInfo = useMemo(() => {
-    return MOCK_CONTACT_INFO[selectedChat.id] || {
+    const existing = MOCK_CONTACT_INFO[selectedChat.id];
+    if (existing) return existing;
+
+    // For a conversation we started, the real address is the one we sent to.
+    const thread = messages[selectedChat.id] || [];
+    const known =
+      [...thread].reverse().find(m => m.fromAddress && m.sender === 'customer')?.fromAddress ||
+      [...thread].reverse().find(m => m.toAddresses && m.toAddresses.length > 0)?.toAddresses?.[0];
+
+    const isComposed = selectedChat.id.startsWith('compose-');
+    return {
       name: selectedChat.name,
       phoneNumber: '+1234567890',
       displayName: selectedChat.name,
       username: selectedChat.name.toLowerCase().replace(' ', '_'),
-      source: `customer_initiated_chat_${selectedChat.channel.toLowerCase()}`,
+      source: isComposed
+        ? 'agent_initiated_email'
+        : `customer_initiated_chat_${selectedChat.channel.toLowerCase()}`,
       emailAddress: selectedChat.channel === 'Email'
-        ? `${selectedChat.name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`
+        ? known || `${selectedChat.name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`
         : undefined,
       attributes: {
         tracking_url: 'www.example.com/track...',
         discount_code: 'WELCOME10'
       }
     };
-  }, [selectedChat]);
+  }, [selectedChat, messages]);
 
   // Event handlers
   const handleToggleContactInfo = useCallback(() => {
@@ -2219,6 +2265,68 @@ export default function App() {
       [selectedChat.id]: [...(prev[selectedChat.id] || []), newMessage]
     }));
   }, [selectedChat.id]);
+
+  // A composed email either continues an existing email conversation (matched by
+  // recipient address) or opens a new one. Either way we land the agent in it.
+  const handleComposeSend = useCallback((payload: ComposeSend) => {
+    const now = new Date();
+    const timestamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const primary = (payload.toAddresses[0] || '').toLowerCase();
+
+    const newMessage: Message = {
+      id: `c${Date.now()}`,
+      text: payload.text,
+      sender: 'agent',
+      timestamp,
+      subject: payload.subject || 'No subject',
+      fromAddress: 'support@wati.io',
+      toAddresses: payload.toAddresses,
+      cc: payload.cc,
+      bcc: payload.bcc,
+    };
+
+    const existing = [...composedChats, ...MOCK_CHATS].find(
+      chat =>
+        chat.channel === 'Email' &&
+        (messages[chat.id] || []).some(m => (m.fromAddress || '').toLowerCase() === primary)
+    );
+
+    if (existing) {
+      setMessages(prev => ({ ...prev, [existing.id]: [...(prev[existing.id] || []), newMessage] }));
+      setSelectedChat(existing);
+      setIsComposeOpen(false);
+      return;
+    }
+
+    // Name the new contact from the address until they reply with something better.
+    const localPart = primary.split('@')[0] || 'New contact';
+    const name = localPart
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ') || 'New contact';
+
+    const chat: Chat = {
+      id: `compose-${Date.now()}`,
+      name,
+      avatar: name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase(),
+      subject: payload.subject || 'No subject',
+      preview: payload.text,
+      lastMessage: payload.text,
+      timestamp,
+      date: now,
+      status: 'Open',
+      channel: 'Email',
+      isOnline: false,
+      unread: false,
+      category: 'Support',
+    };
+
+    setComposedChats(prev => [chat, ...prev]);
+    setMessages(prev => ({ ...prev, [chat.id]: [newMessage] }));
+    setSelectedChat(chat);
+    setIsComposeOpen(false);
+  }, [composedChats, messages]);
 
   const handleDateRangeChange = useCallback((range: DateRange) => {
     setDateRange(range);
@@ -2358,6 +2466,7 @@ export default function App() {
               onCustomFilterApply={handleCustomFilterApply}
               selectedFilter={selectedFilter}
               selectedChannel={selectedChannel}
+              onComposeEmail={() => setIsComposeOpen(true)}
             />
           </div>
 
@@ -2418,6 +2527,16 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Compose surfaces: one from the list (blank), one for the open contact */}
+      <ComposeEmailDialog
+        open={isComposeOpen}
+        onOpenChange={setIsComposeOpen}
+        draftId="compose:blank"
+        title="New email"
+        description="Start a conversation with a new recipient."
+        onSend={handleComposeSend}
+      />
     </div>
   );
 }

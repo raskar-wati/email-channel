@@ -10,14 +10,17 @@ import {
   ArrowLeft,
   PanelRightOpen,
   PanelRightClose,
-  Mail
+  Mail,
+  SquarePen
 } from 'lucide-react';
 import customerAvatar from 'figma:asset/be6e73766eeaba76cb341f8b59d8f0a454fd2458.png';
 import TiTopNav from '../imports/TiTopNav';
 import svgPaths from '../imports/svg-mgoudhpi27';
 import Messenger from '../imports/Messenger';
-import { EmailComposer } from './EmailComposer';
 import { EmailThread } from './EmailThread';
+import { threadSubjects } from '../lib/emailSubject';
+import { EmailComposer } from './EmailComposer';
+import { ComposeMode, draftKey, hasDraft } from '../lib/emailDrafts';
 
 interface Message {
   id: string;
@@ -459,13 +462,23 @@ export function ChatInterface({
   onSendMessage,
   onToggleContactInfo, 
   isContactInfoVisible, 
-  isMobile 
+  isMobile
 }: ChatInterfaceProps) {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // A conversation has at most ONE input area at a time — a thread reply/forward
+  // or a new message, never both. One piece of state decides which, scoped to the
+  // conversation so it can't survive a switch and write a draft under a new key.
+  const [activeComposer, setActiveComposer] = useState<
+    | { kind: 'thread'; conversationId: string; key: string; mode: ComposeMode }
+    | { kind: 'new'; conversationId: string }
+    | null
+  >(null);
+  const newComposerRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 'smooth' is a no-op in some engines, which left new messages off-screen.
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   };
 
   useEffect(() => {
@@ -556,18 +569,28 @@ export function ChatInterface({
 
   const isEmail = selectedChat.channel === 'Email';
 
-  // Derive email thread metadata from the message history
-  const emailSubject = (() => {
-    const withSubject = [...messages].reverse().find((m) => m.subject);
-    return withSubject?.subject || `Conversation with ${selectedChat.name}`;
-  })();
+  // Derive email thread metadata from the message history.
+  const emailThreads = threadSubjects(messages);
 
-  const replySubject = emailSubject.startsWith('Re:') ? emailSubject : `Re: ${emailSubject}`;
+  // With one thread the subject IS the conversation's identity, so the header
+  // names it ("Re:" belongs on individual messages, not here). With several,
+  // naming the most recent one would just repeat a group title below and imply
+  // the conversation is about that subject — so the header carries the thread
+  // count instead and lets each group header own its own subject.
+  const emailHeading =
+    emailThreads.length > 1
+      ? `${emailThreads.length} threads`
+      : emailThreads[0] || `Conversation with ${selectedChat.name}`;
 
   // The customer's address (reply target) is the most recent inbound "from"
   const customerAddress = (() => {
     const lastInbound = [...messages].reverse().find((m) => m.sender === 'customer' && m.fromAddress);
-    return lastInbound?.fromAddress || `${selectedChat.name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`;
+    if (lastInbound?.fromAddress) return lastInbound.fromAddress;
+    // A conversation we started has no inbound mail yet, so use who we sent to
+    // rather than inventing an address from the contact's name.
+    const lastOutbound = [...messages].reverse().find((m) => m.toAddresses && m.toAddresses.length > 0);
+    if (lastOutbound?.toAddresses?.[0]) return lastOutbound.toAddresses[0];
+    return `${selectedChat.name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`;
   })();
 
   // All unique participants across the thread (for Reply all)
@@ -581,13 +604,67 @@ export function ChatInterface({
     return Array.from(set);
   })();
 
+  // A new message starts on the conversation's current topic — the newest thread's
+  // subject — which the agent can edit to start a different one.
+  const composeSubject = emailThreads.length > 0 ? emailThreads[emailThreads.length - 1] : '';
+
+  // The inline "new message" composer keeps its own draft, alongside the
+  // per-thread ones, so leaving and returning doesn't lose what was typed.
+  const newMessageDraftId = draftKey(selectedChat.id, '__new_message__');
+
+  // Switching conversations closes any composer — unless unsent text is waiting
+  // here, in which case reopen exactly one: a thread draft first, else the
+  // new-message draft. The other stays safely in the store behind its button.
+  const threadSignature = emailThreads.join('|');
+  useEffect(() => {
+    const withThreadDraft = emailThreads.find((key) =>
+      hasDraft(draftKey(selectedChat.id, key))
+    );
+    if (withThreadDraft) {
+      setActiveComposer({
+        kind: 'thread',
+        conversationId: selectedChat.id,
+        key: withThreadDraft,
+        mode: 'reply',
+      });
+    } else if (hasDraft(newMessageDraftId)) {
+      setActiveComposer({ kind: 'new', conversationId: selectedChat.id });
+    } else {
+      setActiveComposer(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChat.id, threadSignature, newMessageDraftId]);
+
+  const isComposingNew =
+    activeComposer?.kind === 'new' && activeComposer.conversationId === selectedChat.id;
+
+  // Handed to EmailThread; null whenever the new-message composer owns the slot.
+  const openThreadComposer =
+    activeComposer?.kind === 'thread' && activeComposer.conversationId === selectedChat.id
+      ? { key: activeComposer.key, mode: activeComposer.mode }
+      : null;
+
+  // Same treatment as a thread reply: don't leave it below the fold.
+  useEffect(() => {
+    if (!isComposingNew) return;
+    const bring = () => newComposerRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+    const raf = requestAnimationFrame(bring);
+    const settle = window.setTimeout(bring, 250);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
+    };
+  }, [isComposingNew]);
+
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Header */}
       <div className="h-16 flex-shrink-0">
-        <TiTopNav 
+        <TiTopNav
           onToggleContactInfo={onToggleContactInfo}
           isContactInfoVisible={isContactInfoVisible}
+          showPresence={!isEmail}
+          showTimer={!isEmail}
         />
       </div>
 
@@ -596,13 +673,21 @@ export function ChatInterface({
         <div className="flex-shrink-0 border-b border-gray-100 px-4 lg:px-6 py-3 bg-white">
           <div className="flex items-start gap-2">
             <Mail className="w-4 h-4 text-[#5B6CFF] shrink-0 translate-y-[3px]" />
-            <div className="min-w-0">
-              <p className="text-[14px] text-[#333333] font-semibold truncate leading-5">{emailSubject}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] text-[#333333] font-semibold truncate leading-5">{emailHeading}</p>
               <p className="text-[12px] text-gray-500 truncate">
                 {customerAddress}
                 {allParticipants.length > 1 && ` +${allParticipants.length - 1} more`}
               </p>
             </div>
+            <button
+              onClick={() => setActiveComposer({ kind: 'new', conversationId: selectedChat.id })}
+              className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-gray-200 text-[13px] text-[#5B6CFF] hover:bg-indigo-50 transition-colors"
+              title={`Write a new message to ${selectedChat.name}`}
+            >
+              <SquarePen className="w-4 h-4" />
+              Compose New
+            </button>
           </div>
         </div>
       )}
@@ -612,10 +697,38 @@ export function ChatInterface({
         {isEmail ? (
           <>
             <EmailThread
+              conversationId={selectedChat.id}
               messages={messages}
               customerName={selectedChat.name}
+              openComposer={openThreadComposer}
+              onOpenComposer={(key, mode) =>
+                setActiveComposer({ kind: 'thread', conversationId: selectedChat.id, key, mode })
+              }
+              onCloseComposer={() => setActiveComposer(null)}
               onSend={(text, meta) => onSendMessage(text, meta)}
             />
+
+            {/* A new message to this contact: same composer as a thread reply,
+                minus the subject line. */}
+            {isComposingNew && (
+              <div ref={newComposerRef} className="mt-6 rounded-lg border border-gray-200 bg-white">
+                <EmailComposer
+                  key={newMessageDraftId}
+                  draftId={newMessageDraftId}
+                  defaultSubject={composeSubject}
+                  replyTo={[customerAddress]}
+                  allRecipients={allParticipants}
+                  initialMode="new"
+                  initialTo={customerAddress}
+                  subjectDisplay="tag"
+                  onSend={(text, meta) => {
+                    onSendMessage(text, meta);
+                    setActiveComposer(null);
+                  }}
+                  onCancel={() => setActiveComposer(null)}
+                />
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </>
         ) : (

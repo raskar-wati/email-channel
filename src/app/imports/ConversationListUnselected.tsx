@@ -6,6 +6,7 @@ import MessengerContainer from "./Container-4033-259";
 import SMSContainer from "./Container-4050-541";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 import { AVATAR_PHOTOS } from "../components/avatarPhotos";
+import { useHasDraft } from "../lib/emailDrafts";
 
 interface ConversationProps {
   chat: {
@@ -13,6 +14,8 @@ interface ConversationProps {
     name: string;
     avatar: string;
     lastMessage: string;
+    subject?: string;
+    preview?: string;
     timestamp: string;
     status: string;
     channel: string;
@@ -250,7 +253,19 @@ function ChatItemName({ name, agentName }: { name: string; agentName: string }) 
   );
 }
 
-function MessagePreview({ message, name }: { message: string; name: string }) {
+function MessagePreview({
+  message,
+  name,
+  subject,
+  preview,
+  hasDraft,
+}: {
+  message: string;
+  name: string;
+  subject?: string;
+  preview?: string;
+  hasDraft?: boolean;
+}) {
   return (
     <div className="relative shrink-0 w-full">
       <div className="box-border content-stretch flex flex-col gap-0.5 items-start justify-start p-0 relative w-full">
@@ -261,7 +276,18 @@ function MessagePreview({ message, name }: { message: string; name: string }) {
         </div>
         <div className="font-['Inter:Regular',_sans-serif] font-normal leading-[0] not-italic overflow-ellipsis overflow-hidden relative shrink-0 text-[#333333] text-[14px] text-left text-nowrap w-full">
           <p className="block leading-[20px] text-[12px] truncate">
-            {message}
+            {hasDraft && <span className="text-[#5B6CFF] font-semibold">Draft · </span>}
+            {subject ? (
+              // Email: the subject carries the triage weight, the snippet trails
+              // behind it in grey. Keeping them visually distinct matters because
+              // subjects can themselves contain the dash used as a separator.
+              <>
+                <span className="text-[#333333]">{subject}</span>
+                {preview && <span className="text-gray-400"> — {preview}</span>}
+              </>
+            ) : (
+              message
+            )}
           </p>
         </div>
       </div>
@@ -404,10 +430,17 @@ function ChannelFooter({ category, selectedChannel }: { category: string; select
 }
 
 function ChatDetails({ chat, selectedChannel }: { chat: ConversationProps['chat']; selectedChannel?: string }) {
+  const hasDraft = useHasDraft(chat.id);
   return (
     <div className="basis-0 grow min-h-px min-w-px relative shrink-0">
       <div className="box-border content-stretch flex flex-col gap-1.5 items-start justify-start p-0 relative w-full">
-        <MessagePreview message={chat.lastMessage} name={chat.name} />
+        <MessagePreview
+          message={chat.lastMessage}
+          name={chat.name}
+          subject={chat.subject}
+          preview={chat.preview}
+          hasDraft={hasDraft}
+        />
         <TimeAndStatus status={chat.status} timestamp={chat.timestamp} />
         <ChannelFooter category={chat.category} selectedChannel={selectedChannel} />
       </div>
